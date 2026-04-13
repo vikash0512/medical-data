@@ -398,7 +398,15 @@ async def run_crawl_job(job: CrawlJob) -> None:
 
         if not job.records:
             job.status = "failed"
-            job.status_message = "No pages passed the medical keyword filters."
+            if any("429" in error or "rate-limited" in error.casefold() for error in job.errors):
+                job.status_message = (
+                    "Source website is temporarily rate-limited (HTTP 429). "
+                    "Retry later or lower crawl frequency."
+                )
+            elif job.failed_pages > 0 and job.accepted_pages == 0:
+                job.status_message = "Crawl failed because pages could not be fetched from the source site."
+            else:
+                job.status_message = "No pages passed the medical relevance filters."
             return
 
         finalize_json_export(job)

@@ -58,9 +58,39 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(len(accepted), 0)
         self.assertEqual(len(rejected), 1)
 
+    def test_filter_medical_blocks_rejects_weak_generic_health_message(self):
+        accepted, rejected, _ = filter_medical_blocks(
+            [
+                (
+                    "This campaign promotes better health in communities and asks people to "
+                    "join events and donate for awareness programs."
+                )
+            ]
+        )
+
+        self.assertEqual(len(accepted), 0)
+        self.assertEqual(len(rejected), 1)
+
+    def test_filter_medical_blocks_accepts_strong_clinical_content(self):
+        accepted, rejected, _ = filter_medical_blocks(
+            [
+                (
+                    "Tuberculosis is an infectious disease. Symptoms include persistent cough, "
+                    "fever, and weight loss. Diagnosis requires clinical evaluation and tests. "
+                    "Treatment includes antibiotics and management under medical supervision."
+                )
+            ]
+        )
+
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(len(rejected), 0)
+
     def test_healthcare_url_filter_blocks_campaign_paths(self):
         self.assertTrue(is_healthcare_relevant_url("https://www.who.int/health-topics/malaria"))
         self.assertFalse(is_healthcare_relevant_url("https://www.who.int/campaigns/world-health-day"))
+        self.assertFalse(is_healthcare_relevant_url("https://www.who.int/news-room/releases"))
+        self.assertFalse(is_healthcare_relevant_url("https://www.cdc.gov/other/accessibility.html"))
+        self.assertFalse(is_healthcare_relevant_url("https://www.cdc.gov/other/agencymaterials.html"))
 
     def test_structure_medical_data_extracts_core_sections(self):
         blocks = [

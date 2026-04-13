@@ -17,6 +17,7 @@ const downloadJsonl = document.querySelector("#download-jsonl");
 const downloadCsv = document.querySelector("#download-csv");
 const downloadPreview = document.querySelector("#download-preview");
 const errorList = document.querySelector("#error-list");
+const errorBox = document.querySelector("#error-box");
 const fileForm = document.querySelector("#file-form");
 const fileInput = document.querySelector("#source-file");
 
@@ -61,10 +62,22 @@ function resetDownloads() {
 
 function renderErrors(errors = []) {
   errorList.replaceChildren();
+
+  if (!errors.length) {
+    if (errorBox) {
+      errorBox.open = false;
+    }
+    return;
+  }
+
   for (const message of errors.slice(-8)) {
     const item = document.createElement("li");
     item.textContent = message;
     errorList.appendChild(item);
+  }
+
+  if (errorBox) {
+    errorBox.open = true;
   }
 }
 
@@ -76,7 +89,11 @@ function renderJob(job) {
   statRejected.textContent = job.rejected_pages;
   crawlProgress.max = Math.max(job.max_pages, 1);
   crawlProgress.value = Math.min(job.scraped_pages, job.max_pages);
-  setStatus(job.status_message || job.status);
+  const latestError = job.errors && job.errors.length ? job.errors[job.errors.length - 1] : "";
+  const composedStatus = latestError
+    ? `${job.status_message || job.status} Latest note: ${latestError}`
+    : (job.status_message || job.status);
+  setStatus(composedStatus, job.status === "failed");
   renderErrors(job.errors || []);
 
   const previewRecords = (job.records_preview || []).map((record) => record.data);

@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import List, Optional, Tuple
@@ -15,7 +16,13 @@ except ImportError:  # pragma: no cover - exercised only when dependency is abse
 
 
 REQUEST_HEADERS = {
-    "User-Agent": "MedicalDataExtractorPlatform/1.0 (+health-data-rag-builder)"
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/123.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
 }
 
 REMOVABLE_SELECTORS = (
@@ -178,8 +185,7 @@ async def fetch_html(url: str) -> str:
         async with httpx.AsyncClient(
             timeout=20.0, headers=REQUEST_HEADERS, follow_redirects=True
         ) as client:
-            response = await client.get(url)
-            response.raise_for_status()
+            response = await get_with_retries(client, url)
     except httpx.HTTPError as exc:
         raise ExtractionError(f"Unable to fetch URL: {exc}") from exc
 
@@ -192,8 +198,7 @@ async def fetch_html(url: str) -> str:
 
 async def fetch_html_with_client(client: httpx.AsyncClient, url: str) -> str:
     try:
-        response = await client.get(url)
-        response.raise_for_status()
+        response = await get_with_retries(client, url)
     except httpx.HTTPError as exc:
         raise ExtractionError(f"Unable to fetch URL: {exc}") from exc
 
@@ -202,6 +207,53 @@ async def fetch_html_with_client(client: httpx.AsyncClient, url: str) -> str:
         raise ExtractionError("The URL did not return an HTML page.")
 
     return response.text
+
+
+def parse_retry_after_seconds(header_value: str) -> Optional[int]:
+    try:
+        seconds = int(header_value.strip())
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return max(seconds, 0)
+
+
+async def get_with_retries(
+    client: httpx.AsyncClient,
+    url: str,
+    *,
+    max_attempts: int = 3,
+) -> httpx.Response:
+    last_error: Optional[httpx.HTTPError] = None
+
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = await client.get(url)
+            if response.status_code in {429, 500, 502, 503, 504}:
+                retry_after = parse_retry_after_seconds(response.headers.get("retry-after", ""))
+                if response.status_code == 429 and retry_after and retry_after > 20:
+                    raise ExtractionError(
+                        f"Source is rate-limited (HTTP 429). Retry after about {retry_after} seconds."
+                    )
+
+                if attempt < max_attempts:
+                    delay = retry_after if retry_after is not None else attempt
+                    await asyncio.sleep(min(max(delay, 1), 5))
+                    continue
+
+            response.raise_for_status()
+            return response
+        except ExtractionError:
+            raise
+        except httpx.HTTPError as exc:
+            last_error = exc
+            if attempt < max_attempts:
+                await asyncio.sleep(min(attempt, 3))
+                continue
+            raise
+
+    if last_error is not None:
+        raise last_error
+    raise ExtractionError("Unable to fetch URL after retries.")
 
 
 def parse_html(html: str) -> Tuple[str, List[str]]:
