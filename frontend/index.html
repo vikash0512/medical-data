@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Medical Data Extractor Platform</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="top-band">
+        <p class="eyebrow">RAG dataset builder</p>
+        <h1>Medical Data Extractor Platform</h1>
+        <p class="lede">Paste a trusted health website, crawl its pages, and export structured medical records.</p>
+      </section>
+
+      <section class="crawl-layout" aria-label="Website crawler workspace">
+        <form class="control-surface" id="crawl-form">
+          <div class="section-title">
+            <h2>Website Crawl</h2>
+            <span class="trust-badge">WHO and govt tagging</span>
+          </div>
+
+          <label for="website-url">Website link</label>
+          <input
+            id="website-url"
+            name="website-url"
+            type="text"
+            placeholder="who.int or https://www.who.int"
+            autocomplete="url"
+            required
+          />
+
+          <div class="options-grid">
+            <div>
+              <label for="max-pages">Max pages</label>
+              <input id="max-pages" name="max-pages" type="number" min="1" max="50000" value="1000" />
+            </div>
+            <div>
+              <label for="max-depth">Link depth</label>
+              <input id="max-depth" name="max-depth" type="number" min="0" max="20" value="3" />
+            </div>
+            <div>
+              <label for="concurrency">Workers</label>
+              <input id="concurrency" name="concurrency" type="number" min="1" max="10" value="4" />
+            </div>
+          </div>
+
+          <label class="check-row" for="include-sitemap">
+            <input id="include-sitemap" name="include-sitemap" type="checkbox" checked />
+            Use sitemap and robots.txt discovery
+          </label>
+
+          <button class="primary-action" id="start-crawl" type="submit">Start Website Crawl</button>
+          <p class="status-line" id="crawl-status" role="status">Ready for a website link.</p>
+        </form>
+
+        <section class="progress-surface" aria-label="Crawl progress">
+          <div class="section-title">
+            <h2>Crawl Progress</h2>
+            <span class="status-pill" id="job-status-pill">idle</span>
+          </div>
+
+          <div class="stats-grid">
+            <div class="stat-box">
+              <span>Discovered</span>
+              <strong id="stat-discovered">0</strong>
+            </div>
+            <div class="stat-box">
+              <span>Scraped</span>
+              <strong id="stat-scraped">0</strong>
+            </div>
+            <div class="stat-box">
+              <span>Records</span>
+              <strong id="stat-accepted">0</strong>
+            </div>
+            <div class="stat-box">
+              <span>Rejected</span>
+              <strong id="stat-rejected">0</strong>
+            </div>
+          </div>
+
+          <progress id="crawl-progress" value="0" max="100"></progress>
+
+          <div class="export-row">
+            <a class="download-link disabled" id="download-json" aria-disabled="true">JSON</a>
+            <a class="download-link disabled" id="download-jsonl" aria-disabled="true">JSONL</a>
+            <a class="download-link disabled" id="download-csv" aria-disabled="true">CSV</a>
+          </div>
+
+          <details class="error-box" id="error-box">
+            <summary>Recent crawl notes</summary>
+            <ul id="error-list"></ul>
+          </details>
+        </section>
+      </section>
+
+      <section class="dataset-section" aria-label="Dataset preview">
+        <div class="section-title">
+          <h2>Dataset Preview</h2>
+          <button class="secondary-action" id="download-preview" type="button" disabled>
+            Download Edited Preview
+          </button>
+        </div>
+        <textarea
+          id="dataset-preview"
+          spellcheck="false"
+          aria-label="Editable dataset preview"
+        >[]</textarea>
+      </section>
+
+      <section class="file-section" aria-label="Single file extractor">
+        <form class="file-bar" id="file-form">
+          <div>
+            <h2>Single File Extract</h2>
+            <p>Use this for PDF, TXT, or DOCX records outside a website crawl.</p>
+          </div>
+          <input id="source-file" name="source-file" type="file" accept=".pdf,.txt,.docx" />
+          <button class="secondary-action" type="submit">Extract File</button>
+        </form>
+      </section>
+    </main>
+
+    <script src="/static/app.js" type="module"></script>
+  </body>
+</html>
