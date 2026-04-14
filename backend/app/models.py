@@ -83,7 +83,7 @@ class MergeJsonResponse(BaseModel):
 class CrawlStartRequest(BaseModel):
     url: Optional[str] = None
     urls: List[str] = Field(default_factory=list)
-    max_pages: int = Field(default=250, ge=1, le=50000)
+    max_pages: int = Field(default=250, ge=1, le=25000)
     max_depth: int = Field(default=2, ge=0, le=8)
     include_sitemap: bool = True
     concurrency: int = Field(default=2, ge=1, le=6)
