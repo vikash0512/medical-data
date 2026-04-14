@@ -11,7 +11,7 @@
       <section class="top-band">
         <p class="eyebrow">RAG dataset builder</p>
         <h1>Medical Data Extractor Platform</h1>
-        <p class="lede">Paste a trusted health website, crawl its pages, and export structured medical records.</p>
+        <p class="lede">Paste trusted health platforms, crawl across them, and export structured medical records.</p>
       </section>
 
       <section class="crawl-layout" aria-label="Website crawler workspace">
@@ -21,28 +21,28 @@
             <span class="trust-badge">WHO and govt tagging</span>
           </div>
 
-          <label for="website-url">Website link</label>
-          <input
-            id="website-url"
-            name="website-url"
-            type="text"
-            placeholder="who.int or https://www.who.int"
-            autocomplete="url"
+          <label for="website-urls">Website links</label>
+          <textarea
+            id="website-urls"
+            name="website-urls"
+            placeholder="https://www.who.int, https://medlineplus.gov, https://www.cdc.gov"
+            rows="5"
             required
-          />
+          ></textarea>
+          <p class="helper-text">You can paste links in CSV format (comma-separated), semicolon-separated, or one link per line. Duplicate links are removed automatically.</p>
 
           <div class="options-grid">
             <div>
-              <label for="max-pages">Max pages</label>
-              <input id="max-pages" name="max-pages" type="number" min="1" max="50000" value="1000" />
+              <label for="max-pages">Max pages per platform</label>
+              <input id="max-pages" name="max-pages" type="number" min="1" max="50000" value="250" />
             </div>
             <div>
               <label for="max-depth">Link depth</label>
-              <input id="max-depth" name="max-depth" type="number" min="0" max="20" value="3" />
+              <input id="max-depth" name="max-depth" type="number" min="0" max="8" value="2" />
             </div>
             <div>
               <label for="concurrency">Workers</label>
-              <input id="concurrency" name="concurrency" type="number" min="1" max="10" value="4" />
+              <input id="concurrency" name="concurrency" type="number" min="1" max="6" value="2" />
             </div>
           </div>
 
@@ -50,6 +50,8 @@
             <input id="include-sitemap" name="include-sitemap" type="checkbox" checked />
             Use sitemap and robots.txt discovery
           </label>
+
+          <p class="helper-text">The page limit applies to each platform. Worker usage is capped to a maximum of 3 workers per platform to avoid overloading slower websites.</p>
 
           <button class="primary-action" id="start-crawl" type="submit">Start Website Crawl</button>
           <p class="status-line" id="crawl-status" role="status">Ready for a website link.</p>
@@ -80,7 +82,63 @@
             </div>
           </div>
 
+          <div class="diagnostics-panel" aria-label="Runtime diagnostics">
+            <div class="diagnostics-header">
+              <h3>Performance Monitor</h3>
+              <span class="diag-chip" id="diag-source">collecting...</span>
+            </div>
+
+            <div class="diag-item">
+              <div class="diag-row">
+                <span>CPU usage</span>
+                <strong id="diag-cpu-value">0%</strong>
+              </div>
+              <progress id="diag-cpu" value="0" max="100"></progress>
+            </div>
+
+            <div class="diag-item">
+              <div class="diag-row">
+                <span>System RAM usage</span>
+                <strong id="diag-ram-value">n/a</strong>
+              </div>
+              <progress id="diag-ram" value="0" max="100"></progress>
+            </div>
+
+            <div class="diag-inline-grid">
+              <div>
+                <span class="diag-label">Process RAM</span>
+                <strong id="diag-process-ram">n/a</strong>
+              </div>
+              <div>
+                <span class="diag-label">Threads</span>
+                <strong id="diag-threads">n/a</strong>
+              </div>
+              <div>
+                <span class="diag-label">Load (1m)</span>
+                <strong id="diag-load-1m">n/a</strong>
+              </div>
+              <div>
+                <span class="diag-label">Load (5m)</span>
+                <strong id="diag-load-5m">n/a</strong>
+              </div>
+            </div>
+          </div>
+
+          <div class="platform-progress-header">
+            <h3>Platform Progress</h3>
+            <p>Each trusted platform gets its own progress bar. The total crawl budget scales with the number of platforms.</p>
+          </div>
+
+          <div class="platform-progress-grid" id="platform-progress-list"></div>
+
           <progress id="crawl-progress" value="0" max="100"></progress>
+
+          <div class="crawl-controls" aria-label="Crawl controls">
+            <button class="secondary-action" id="crawl-pause" type="button" disabled>Pause</button>
+            <button class="secondary-action" id="crawl-resume" type="button" disabled>Resume</button>
+            <button class="secondary-action" id="crawl-cancel" type="button" disabled>Cancel</button>
+            <button class="secondary-action" id="crawl-reset" type="button">Reset All</button>
+          </div>
 
           <div class="export-row">
             <a class="download-link disabled" id="download-json" aria-disabled="true">JSON</a>
@@ -88,9 +146,9 @@
             <a class="download-link disabled" id="download-csv" aria-disabled="true">CSV</a>
           </div>
 
-          <details class="error-box" id="error-box">
-            <summary>Recent crawl notes</summary>
-            <ul id="error-list"></ul>
+          <details class="error-box" id="error-box" open>
+            <summary>Recent Crawl Notes</summary>
+            <pre class="notes-terminal" id="crawl-notes" aria-live="polite"></pre>
           </details>
         </section>
       </section>
@@ -107,6 +165,24 @@
           spellcheck="false"
           aria-label="Editable dataset preview"
         >[]</textarea>
+      </section>
+
+      <section class="file-section" aria-label="Merge JSON datasets">
+        <form class="file-bar merge-bar" id="merge-form">
+          <div>
+            <h2>Merge JSON Datasets</h2>
+            <p>Upload one or more JSON files and remove duplicates (even inside a single file).</p>
+          </div>
+          <input id="merge-source-files" name="merge-source-files" type="file" accept="application/json,.json" multiple />
+          <button class="secondary-action" id="merge-submit" type="submit">Deduplicate JSON</button>
+        </form>
+        <div class="merge-progress-wrap" aria-label="Merge progress">
+          <progress id="merge-progress" value="0" max="100"></progress>
+          <button class="secondary-action" id="merge-download" type="button" hidden disabled>
+            Download Merged JSON
+          </button>
+        </div>
+        <p class="merge-status" id="merge-status">Ready to merge JSON datasets.</p>
       </section>
 
       <section class="file-section" aria-label="Single file extractor">

@@ -6,6 +6,8 @@ from pathlib import Path
 
 from backend.app.services.cleaner import clean_blocks
 from backend.app.services.crawler import (
+    build_platform_worker_limits,
+    CrawlJobManager,
     CrawlJob,
     append_record_export,
     build_record,
@@ -14,15 +16,72 @@ from backend.app.services.crawler import (
     parse_sitemap_xml,
     prepare_exports,
 )
+from backend.app.services.deduplicator import deduplicate_records, record_fingerprint
+from backend.app.main import parse_uploaded_json_records
 from backend.app.services.file_extractor import extract_file
-from backend.app.services.filters import filter_medical_blocks, is_healthcare_relevant_url
+from backend.app.services.filters import (
+    filter_medical_blocks,
+    is_condition_reference_page,
+    is_healthcare_relevant_url,
+)
 from backend.app.services.language import detect_language
 from backend.app.services.scraper import canonicalize_url
+from backend.app.services.scraper import classify_source
 from backend.app.services.structurer import structure_medical_data
 from backend.app.services.uploads import decode_uploaded_file
 
 
 class ServiceTests(unittest.TestCase):
+    def test_build_platform_worker_limits_even_split(self):
+        limits = build_platform_worker_limits(["p1", "p2", "p3"], 6)
+        self.assertEqual(limits, {"p1": 2, "p2": 2, "p3": 2})
+
+    def test_build_platform_worker_limits_with_remainder(self):
+        limits = build_platform_worker_limits(["p1", "p2", "p3"], 5)
+        self.assertEqual(limits, {"p1": 2, "p2": 2, "p3": 1})
+
+    def test_build_platform_worker_limits_caps_at_three_per_platform(self):
+        limits = build_platform_worker_limits(["p1", "p2", "p3"], 20)
+        self.assertEqual(limits, {"p1": 3, "p2": 3, "p3": 3})
+
+    def test_create_job_assigns_per_platform_page_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = CrawlJobManager(Path(directory))
+            job = manager.create_job(
+                start_urls=[
+                    "https://www.who.int/",
+                    "https://medlineplus.gov/",
+                    "https://www.cdc.gov/",
+                ],
+                max_pages=1000,
+                max_depth=1,
+                include_sitemap=False,
+                concurrency=8,
+            )
+
+            self.assertEqual(job.max_pages, 3000)
+            self.assertEqual(job.platform_max_pages, 1000)
+            self.assertEqual(job.concurrency, 8)
+            self.assertEqual(len(job.platform_states), 3)
+            self.assertTrue(all(platform.max_pages == 1000 for platform in job.platform_states))
+
+    def test_create_job_caps_total_workers_to_three_per_platform(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = CrawlJobManager(Path(directory))
+            job = manager.create_job(
+                start_urls=[
+                    "https://www.who.int/",
+                    "https://medlineplus.gov/",
+                    "https://www.cdc.gov/",
+                ],
+                max_pages=1000,
+                max_depth=1,
+                include_sitemap=False,
+                concurrency=20,
+            )
+
+            self.assertEqual(job.concurrency, 9)
+
     def test_clean_blocks_removes_short_text_and_duplicates(self):
         long_text = (
             "Symptoms may include fever and cough, and prevention depends on vaccination "
@@ -113,11 +172,20 @@ class ServiceTests(unittest.TestCase):
 
         self.assertEqual(record.title, "Example Disease")
         self.assertTrue(record.verified)
+        self.assertEqual(record.verified_from, "WHO")
         self.assertTrue(record.symptoms)
         self.assertTrue(record.home_care)
         self.assertTrue(record.warning_signs)
         self.assertTrue(record.prevention)
         self.assertIn("who.int", record.source_url)
+
+    def test_classify_source_sets_platform_specific_verified_from(self):
+        source_name, verified, verified_from, tags = classify_source("https://medlineplus.gov/diabetes.html")
+
+        self.assertTrue(verified)
+        self.assertEqual(verified_from, "MedlinePlus")
+        self.assertEqual(source_name, "MedlinePlus")
+        self.assertTrue(any("MedlinePlus" in tag for tag in tags))
 
     def test_txt_file_extraction(self):
         content = (
@@ -172,6 +240,55 @@ class ServiceTests(unittest.TestCase):
 
         self.assertIsNone(record)
 
+    def test_crawl_record_builder_rejects_incomplete_sections(self):
+        record = build_record(
+            title="Regional Update",
+            source_name="example",
+            source_url="https://example.com/health-update",
+            verified=False,
+            tags=[],
+            blocks=[
+                (
+                    "Symptoms include fever and cough. Prevention includes hand washing and "
+                    "vaccination during outbreaks."
+                )
+            ],
+        )
+
+        self.assertIsNone(record)
+
+    def test_condition_reference_page_rejects_generic_explainer(self):
+        self.assertFalse(
+            is_condition_reference_page(
+                "How the Wolbachia method works",
+                [
+                    (
+                        "This method uses mosquitoes infected with Wolbachia bacteria to reduce the spread of dengue. "
+                        "The campaign explains how the program works in local communities."
+                    )
+                ],
+                "https://example.com/article",
+            )
+        )
+
+    def test_crawl_record_builder_accepts_complete_sections(self):
+        record = build_record(
+            title="Example Disease",
+            source_name="example",
+            source_url="https://example.com/disease",
+            verified=False,
+            tags=[],
+            blocks=[
+                (
+                    "Symptoms include fever and cough. Treatment at home includes rest and fluids. "
+                    "Severe breathing difficulty is a warning sign, and people should seek medical care "
+                    "from a doctor immediately. Prevention includes vaccination and hand washing."
+                )
+            ],
+        )
+
+        self.assertIsNotNone(record)
+
     def test_crawl_exports_stream_records_to_disk(self):
         record = build_record(
             title="Example Disease",
@@ -181,8 +298,9 @@ class ServiceTests(unittest.TestCase):
             tags=[],
             blocks=[
                 (
-                    "Symptoms include fever and cough. Treatment includes rest and fluids. "
-                    "Prevention includes vaccination and hand washing."
+                    "Symptoms include fever and cough. Treatment at home includes rest and fluids. "
+                    "Severe breathing difficulty is a warning sign, and people should seek medical care "
+                    "from a doctor immediately. Prevention includes vaccination and hand washing."
                 )
             ],
         )
@@ -206,6 +324,134 @@ class ServiceTests(unittest.TestCase):
             jsonl_text = job.export_paths["jsonl"].read_text(encoding="utf-8")
             self.assertEqual(exported[0]["title"], "Example Disease")
             self.assertIn("raw_blocks", jsonl_text)
+
+    def test_record_fingerprint_matches_duplicates(self):
+        first = structure_medical_data(
+            [
+                (
+                    "Symptoms include fever and cough. Treatment at home includes rest and fluids. "
+                    "Severe breathing difficulty is a warning sign, and people should seek medical care "
+                    "from a doctor immediately. Prevention includes vaccination and hand washing."
+                )
+            ],
+            source_title="Example Disease",
+            source_name="example",
+            source_url="https://example.com/disease",
+            verified=False,
+        )
+        second = structure_medical_data(
+            [
+                (
+                    "Symptoms include fever and cough. Treatment at home includes rest and fluids. "
+                    "Severe breathing difficulty is a warning sign, and people should seek medical care "
+                    "from a doctor immediately. Prevention includes vaccination and hand washing."
+                )
+            ],
+            source_title="Example Disease",
+            source_name="example",
+            source_url="https://example.com/disease",
+            verified=False,
+        )
+
+        self.assertEqual(record_fingerprint(first), record_fingerprint(second))
+
+    def test_deduplicate_records_removes_duplicates(self):
+        record_one = structure_medical_data(
+            [
+                (
+                    "Symptoms include fever and cough. Treatment at home includes rest and fluids. "
+                    "Severe breathing difficulty is a warning sign, and people should seek medical care "
+                    "from a doctor immediately. Prevention includes vaccination and hand washing."
+                )
+            ],
+            source_title="Example Disease",
+            source_name="example",
+            source_url="https://example.com/disease",
+            verified=False,
+        )
+        record_two = structure_medical_data(
+            [
+                (
+                    "Symptoms include fever and cough. Treatment at home includes rest and fluids. "
+                    "Severe breathing difficulty is a warning sign, and people should seek medical care "
+                    "from a doctor immediately. Prevention includes vaccination and hand washing."
+                )
+            ],
+            source_title="Example Disease",
+            source_name="example",
+            source_url="https://example.com/disease",
+            verified=False,
+        )
+
+        unique_records, duplicate_count = deduplicate_records([record_one, record_two])
+
+        self.assertEqual(len(unique_records), 1)
+        self.assertEqual(duplicate_count, 1)
+
+    def test_parse_uploaded_json_records_supports_array(self):
+        payload = json.dumps(
+            [
+                {
+                    "title": "Example Disease",
+                    "category": "disease",
+                    "symptoms": ["fever"],
+                    "common_symptoms": [],
+                    "rare_symptoms": [],
+                    "description": "Example description",
+                    "differential_questions": [],
+                    "severity_levels": {"mild": {"conditions": [], "advice": []}, "moderate": {"conditions": [], "advice": []}, "severe": {"conditions": [], "advice": []}},
+                    "home_care": ["rest"],
+                    "lifestyle_tips": [],
+                    "warning_signs": ["seek care"],
+                    "when_to_seek_doctor": "Seek care if severe",
+                    "prevention": ["wash hands"],
+                    "risk_groups": [],
+                    "possible_confusions": [],
+                    "confidence_rules": {"min_symptoms_match": 2, "high_confidence_threshold": 0.7},
+                    "source": "example",
+                    "verified": False,
+                    "source_url": "https://example.com"
+                }
+            ]
+        ).encode("utf-8")
+
+        records = parse_uploaded_json_records("sample.json", payload)
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].title, "Example Disease")
+
+    def test_parse_uploaded_json_records_supports_records_object(self):
+        payload = json.dumps(
+            {
+                "records": [
+                    {
+                        "title": "Example Disease",
+                        "category": "disease",
+                        "symptoms": ["fever"],
+                        "common_symptoms": [],
+                        "rare_symptoms": [],
+                        "description": "Example description",
+                        "differential_questions": [],
+                        "severity_levels": {"mild": {"conditions": [], "advice": []}, "moderate": {"conditions": [], "advice": []}, "severe": {"conditions": [], "advice": []}},
+                        "home_care": ["rest"],
+                        "lifestyle_tips": [],
+                        "warning_signs": ["seek care"],
+                        "when_to_seek_doctor": "Seek care if severe",
+                        "prevention": ["wash hands"],
+                        "risk_groups": [],
+                        "possible_confusions": [],
+                        "confidence_rules": {"min_symptoms_match": 2, "high_confidence_threshold": 0.7},
+                        "source": "example",
+                        "verified": False,
+                        "source_url": "https://example.com"
+                    }
+                ]
+            }
+        ).encode("utf-8")
+
+        records = parse_uploaded_json_records("sample.json", payload)
+
+        self.assertEqual(len(records), 1)
 
 
 if __name__ == "__main__":

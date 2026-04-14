@@ -62,6 +62,26 @@ HOME_CARE_TERMS = (
 
 WARNING_CONTEXT_TERMS = ("warning", "danger", "emergency", "severe", "seek medical", "seek care")
 
+DEFAULT_DIFFERENTIAL_QUESTIONS = [
+    "Do you have high fever (>102°F)?",
+    "Are you experiencing body pain?",
+    "Since how many days do you have symptoms?",
+]
+
+DEFAULT_RISK_GROUPS = ["children", "pregnant women", "elderly"]
+
+DEFAULT_POSSIBLE_CONFUSIONS = ["Common cold", "Flu", "COVID-19"]
+
+LIFESTYLE_TERMS = (
+    "sleep",
+    "exercise",
+    "diet",
+    "hydration",
+    "stress",
+    "avoid smoking",
+    "avoid alcohol",
+)
+
 
 def split_sentences(text: str) -> List[str]:
     sentences = re.split(r"(?<=[.!?])\s+", text)
@@ -147,6 +167,64 @@ def infer_when_to_seek_doctor(warnings: List[str], blocks: Iterable[str]) -> str
     return ""
 
 
+def split_symptom_buckets(symptoms: List[str]) -> tuple[List[str], List[str]]:
+    common = symptoms[:4]
+    rare = symptoms[4:]
+    return common, rare
+
+
+def build_severity_levels(warning_signs: List[str], home_care: List[str]) -> dict:
+    mild_conditions = [
+        "No severe warning signs",
+        "Mild and stable symptoms",
+    ]
+    moderate_conditions = [
+        "Symptoms persist beyond a few days",
+        "Symptoms interfere with daily activities",
+    ]
+    severe_conditions = warning_signs[:5] or ["Any emergency warning sign"]
+
+    mild_advice = home_care[:5] or ["Monitor symptoms and continue basic supportive care"]
+    moderate_advice = [
+        "Consult a doctor soon for clinical evaluation",
+        "Monitor progression closely and avoid self-medication escalation",
+    ]
+    severe_advice = [
+        "Seek immediate medical care",
+        "Visit the nearest emergency facility without delay",
+    ]
+
+    return {
+        "mild": {"conditions": mild_conditions, "advice": mild_advice},
+        "moderate": {"conditions": moderate_conditions, "advice": moderate_advice},
+        "severe": {"conditions": severe_conditions, "advice": severe_advice},
+    }
+
+
+def has_minimum_required_fields(data: StructuredMedicalData) -> bool:
+    return bool(
+        data.title.strip()
+        and data.category.strip()
+        and data.symptoms
+        and data.description.strip()
+        and data.warning_signs
+        and data.when_to_seek_doctor.strip()
+        and data.prevention
+    )
+
+
+def infer_verified_from(source_name: str, verified_from: str) -> str:
+    if verified_from:
+        return verified_from
+
+    lower_source = source_name.casefold()
+    if "world health organization" in lower_source or "who" in lower_source:
+        return "WHO"
+    if any(term in lower_source for term in ("government", "cdc", "nih", "nhs")):
+        return "Government health source"
+    return ""
+
+
 def structure_medical_data(
     blocks: List[str],
     *,
@@ -154,24 +232,38 @@ def structure_medical_data(
     source_name: str = "",
     source_url: str = "",
     verified: bool = False,
+    verified_from: str = "",
 ) -> StructuredMedicalData:
     symptoms = extract_matching_sentences(
         blocks, SYMPTOM_TERMS, exclude_terms=WARNING_CONTEXT_TERMS
     )
+    common_symptoms, rare_symptoms = split_symptom_buckets(symptoms)
     prevention = extract_matching_sentences(blocks, PREVENTION_TERMS)
     warning_signs = extract_matching_sentences(blocks, WARNING_TERMS)
     home_care = extract_matching_sentences(blocks, HOME_CARE_TERMS)
+    lifestyle_tips = extract_matching_sentences(blocks, LIFESTYLE_TERMS)
+    when_to_seek_doctor = infer_when_to_seek_doctor(warning_signs, blocks)
+    verified_from = infer_verified_from(source_name, verified_from) if verified else ""
 
     return StructuredMedicalData(
         title=infer_title(source_title, blocks),
         category="disease",
         symptoms=symptoms,
+        common_symptoms=common_symptoms,
+        rare_symptoms=rare_symptoms,
         description=build_description(blocks),
+        differential_questions=DEFAULT_DIFFERENTIAL_QUESTIONS,
+        severity_levels=build_severity_levels(warning_signs, home_care),
         home_care=home_care,
+        lifestyle_tips=lifestyle_tips,
         warning_signs=warning_signs,
-        when_to_seek_doctor=infer_when_to_seek_doctor(warning_signs, blocks),
+        when_to_seek_doctor=when_to_seek_doctor,
         prevention=prevention,
+        risk_groups=DEFAULT_RISK_GROUPS,
+        possible_confusions=DEFAULT_POSSIBLE_CONFUSIONS,
+        confidence_rules={"min_symptoms_match": 2, "high_confidence_threshold": 0.7},
         source=source_name,
         verified=verified,
+        verified_from=verified_from,
         source_url=source_url,
     )

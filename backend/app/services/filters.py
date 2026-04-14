@@ -138,6 +138,22 @@ EXCLUDED_URL_SEGMENTS = {
     "disclaimer",
 }
 
+GENERIC_ARTICLE_TITLE_TERMS = (
+    "what is",
+    "what are",
+    "how ",
+    "can we",
+    "can you",
+    "world's",
+    "worlds",
+    "article",
+    "explained",
+    "works",
+    "method",
+    "study",
+    "report",
+)
+
 
 def _keyword_hits(text: str, keywords: Iterable[str]) -> int:
     return sum(1 for keyword in keywords if keyword in text)
@@ -200,6 +216,35 @@ def is_healthcare_relevant_url(url: str) -> bool:
         return False
 
     return not any(keyword in path_and_query for keyword in EXCLUDED_URL_KEYWORDS)
+
+
+def is_condition_reference_page(title: str, blocks: Iterable[str], source_url: str = "") -> bool:
+    joined = " ".join(blocks).casefold()
+    lowered_title = title.casefold().strip()
+    lowered_url = source_url.casefold().strip()
+
+    if lowered_title and any(term in lowered_title for term in GENERIC_ARTICLE_TITLE_TERMS):
+        return False
+
+    if not any(keyword in joined for keyword in CONDITION_KEYWORDS) and not any(
+        keyword in lowered_title for keyword in CONDITION_KEYWORDS
+    ):
+        return False
+
+    if not any(keyword in joined for keyword in ALLOWED_KEYWORDS):
+        return False
+
+    # Generic explainer pages often mention medical terms in passing but do not read like
+    # condition reference pages. Require stronger evidence in the title or URL.
+    title_has_condition = any(keyword in lowered_title for keyword in CONDITION_KEYWORDS)
+    url_has_condition = any(keyword in lowered_url for keyword in CONDITION_KEYWORDS)
+    context_hits = _keyword_hits(joined, MEDICAL_CONTEXT_KEYWORDS)
+    required_hits = _keyword_hits(joined, ALLOWED_KEYWORDS)
+
+    if title_has_condition or url_has_condition:
+        return context_hits >= 2 or required_hits >= 2
+
+    return False
 
 
 def estimate_quality_score(blocks: Iterable[str]) -> float:

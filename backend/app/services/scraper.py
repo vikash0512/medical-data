@@ -88,6 +88,7 @@ class ScrapeResult:
     source_url: str
     source_name: str
     verified: bool
+    verified_from: str = ""
     tags: List[str] = field(default_factory=list)
 
 
@@ -156,28 +157,54 @@ def is_probably_html_url(url: str) -> bool:
     return not path.endswith(NON_HTML_EXTENSIONS)
 
 
-def classify_source(url: str) -> Tuple[str, bool, List[str]]:
+def platform_label(host: str) -> str:
+    if host.endswith("who.int"):
+        return "WHO"
+    if host.endswith("medlineplus.gov") or host.endswith("medlineplus.org"):
+        return "MedlinePlus"
+    if host.endswith("cdc.gov"):
+        return "CDC"
+    if host.endswith("nih.gov"):
+        return "NIH"
+    if host.endswith("nhs.uk"):
+        return "NHS"
+    if host.endswith("gov.in"):
+        return "Government of India"
+    if host.endswith(".gov") or ".gov." in host:
+        return "Government health source"
+    return ""
+
+
+def classify_source(url: str) -> Tuple[str, bool, str, List[str]]:
     host = urlparse(url).netloc.lower().removeprefix("www.")
     tags: List[str] = []
     source_name = host or "Web page"
+    verified_from = platform_label(host)
 
-    if host.endswith("who.int"):
+    if verified_from == "WHO":
         tags.append("WHO verified")
         source_name = "World Health Organization"
-
-    if (
-        host.endswith(".gov")
-        or ".gov." in host
-        or host.endswith("gov.in")
-        or host.endswith("nhs.uk")
-        or host.endswith("cdc.gov")
-        or host.endswith("nih.gov")
-    ):
+    elif verified_from == "MedlinePlus":
+        tags.append("MedlinePlus verified")
+        source_name = "MedlinePlus"
+    elif verified_from == "CDC":
+        tags.append("CDC verified")
+        source_name = "Centers for Disease Control and Prevention"
+    elif verified_from == "NIH":
+        tags.append("NIH verified")
+        source_name = "National Institutes of Health"
+    elif verified_from == "NHS":
+        tags.append("NHS verified")
+        source_name = "National Health Service"
+    elif verified_from == "Government of India":
+        tags.append("Govt verified")
+        source_name = "Government of India"
+    elif verified_from == "Government health source":
         tags.append("Govt verified")
         if source_name == host:
             source_name = "Government health source"
 
-    return source_name, bool(tags), tags
+    return source_name, bool(tags), verified_from, tags
 
 
 async def fetch_html(url: str) -> str:
@@ -317,7 +344,7 @@ async def scrape_url(url: str) -> ScrapeResult:
     normalized_url = normalize_url(url)
     html = await fetch_html(normalized_url)
     title, blocks = parse_html(html)
-    source_name, verified, tags = classify_source(normalized_url)
+    source_name, verified, verified_from, tags = classify_source(normalized_url)
 
     if not blocks:
         raise ExtractionError("No paragraph-level medical content was found on the page.")
@@ -328,5 +355,6 @@ async def scrape_url(url: str) -> ScrapeResult:
         source_url=normalized_url,
         source_name=source_name,
         verified=verified,
+        verified_from=verified_from,
         tags=tags,
     )
